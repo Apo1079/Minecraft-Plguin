@@ -1,0 +1,621 @@
+package de.casino.plugin;
+
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.Material;
+import org.bukkit.Sound;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitRunnable;
+
+import java.time.LocalDate;
+import java.util.*;
+
+public class CasinoPlugin extends JavaPlugin implements Listener, CommandExecutor {
+
+    private Map<UUID, LocalDate> lastWheelSpin = new HashMap<>();
+    private Map<UUID, Integer> playerMoney = new HashMap<>();
+    private Map<UUID, String> rouletteGames = new HashMap<>();
+    private Map<UUID, Integer> rouletteBets = new HashMap<>();
+    private Map<UUID, Boolean> waitingForNumberInput = new HashMap<>();
+
+    private final String[] wheelPrizes = {
+            "1 Emerald", "5 Gold", "10 Iron", "Nichts", "2 Diamonds",
+            "Nichts", "3 Gold", "Nichts", "1 Diamond", "Nichts",
+            "5 Iron", "Nichts", "10 EMERALDS", "Nichts", "2 Gold"
+    };
+
+    private final int[] rouletteNumbers = {
+            0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5,
+            24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26
+    };
+
+    private final int[] greenNumbers = {0, 37};
+
+    @Override
+    public void onEnable() {
+        getLogger().info("Casino Plugin aktiviert!");
+        Bukkit.getPluginManager().registerEvents(this, this);
+        getCommand("casino").setExecutor(this);
+        loadPlayerData();
+    }
+
+    @Override
+    public void onDisable() {
+        savePlayerData();
+        getLogger().info("Casino Plugin deaktiviert!");
+    }
+
+    private void loadPlayerData() {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            playerMoney.putIfAbsent(player.getUniqueId(), 0);
+        }
+    }
+
+    private void savePlayerData() {
+    }
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (command.getName().equalsIgnoreCase("casino")) {
+            if (!(sender instanceof Player)) {
+                sender.sendMessage("Nur Spieler können das Casino betreten!");
+                return true;
+            }
+
+            Player player = (Player) sender;
+            playerMoney.putIfAbsent(player.getUniqueId(), 0);
+            openCasinoMenu(player);
+            return true;
+        }
+        return false;
+    }
+
+    private void openCasinoMenu(Player player) {
+        Inventory casino = Bukkit.createInventory(null, 27, ChatColor.GOLD + "★ CASINO ★");
+
+        ItemStack wheelItem = new ItemStack(Material.COMPASS);
+        ItemMeta wheelMeta = wheelItem.getItemMeta();
+        wheelMeta.setDisplayName(ChatColor.YELLOW + "Glücksrad");
+        wheelMeta.setLore(Arrays.asList(
+                ChatColor.GRAY + "Drehe das Glücksrad!",
+                ChatColor.GREEN + "Einmal täglich kostenlos",
+                ChatColor.GOLD + "Hauptgewinn: 10 Emeralds!"
+        ));
+        wheelItem.setItemMeta(wheelMeta);
+
+        ItemStack rouletteItem = new ItemStack(Material.REDSTONE_BLOCK);
+        ItemMeta rouletteMeta = rouletteItem.getItemMeta();
+        rouletteMeta.setDisplayName(ChatColor.RED + "Roulette");
+        rouletteMeta.setLore(Arrays.asList(
+                ChatColor.GRAY + "Spiele Roulette!",
+                ChatColor.YELLOW + "Setze auf Zahlen oder Farben",
+                ChatColor.GREEN + "Hohe Gewinne möglich!"
+        ));
+        rouletteItem.setItemMeta(rouletteMeta);
+
+        ItemStack moneyItem = new ItemStack(Material.EMERALD);
+        ItemMeta moneyMeta = moneyItem.getItemMeta();
+        moneyMeta.setDisplayName(ChatColor.GREEN + "Dein Guthaben");
+        moneyMeta.setLore(Arrays.asList(
+                ChatColor.YELLOW + "Aktuell: " + playerMoney.get(player.getUniqueId()) + " Emeralds"
+        ));
+        moneyItem.setItemMeta(moneyMeta);
+
+        ItemStack depositItem = new ItemStack(Material.ENDER_CHEST);
+        ItemMeta depositMeta = depositItem.getItemMeta();
+        depositMeta.setDisplayName(ChatColor.AQUA + "Emeralds einzahlen");
+        depositMeta.setLore(Arrays.asList(
+                ChatColor.GRAY + "Zahle Emeralds aus deinem",
+                ChatColor.GRAY + "Inventar ein"
+        ));
+        depositItem.setItemMeta(depositMeta);
+
+        ItemStack withdrawItem = new ItemStack(Material.CHEST);
+        ItemMeta withdrawMeta = withdrawItem.getItemMeta();
+        withdrawMeta.setDisplayName(ChatColor.LIGHT_PURPLE + "Emeralds auszahlen");
+        withdrawMeta.setLore(Arrays.asList(
+                ChatColor.GRAY + "Zahle dein Guthaben in",
+                ChatColor.GRAY + "Emeralds aus"
+        ));
+        withdrawItem.setItemMeta(withdrawMeta);
+
+        casino.setItem(10, wheelItem);
+        casino.setItem(12, rouletteItem);
+        casino.setItem(14, moneyItem);
+        casino.setItem(16, depositItem);
+        casino.setItem(22, withdrawItem);
+
+        player.openInventory(casino);
+        player.playSound(player.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 1.0f, 1.0f);
+    }
+
+    @EventHandler
+    public void onInventoryClick(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player)) return;
+        Player player = (Player) event.getWhoClicked();
+
+        if (event.getView().getTitle().equals(ChatColor.GOLD + "★ CASINO ★")) {
+            event.setCancelled(true);
+
+            if (event.getCurrentItem() == null) return;
+
+            if (event.getCurrentItem().getType() == Material.COMPASS) {
+                spinWheel(player);
+            } else if (event.getCurrentItem().getType() == Material.REDSTONE_BLOCK) {
+                openRouletteMenu(player);
+            } else if (event.getCurrentItem().getType() == Material.ENDER_CHEST) {
+                depositEmeralds(player);
+            } else if (event.getCurrentItem().getType() == Material.CHEST) {
+                withdrawEmeralds(player);
+            }
+        } else if (event.getView().getTitle().equals(ChatColor.RED + "★ ROULETTE ★")) {
+            event.setCancelled(true);
+            handleRouletteClick(player, event);
+        }
+    }
+
+    @EventHandler
+    public void onPlayerChat(AsyncPlayerChatEvent event) {
+        Player player = event.getPlayer();
+        UUID playerId = player.getUniqueId();
+
+        if (waitingForNumberInput.containsKey(playerId) && waitingForNumberInput.get(playerId)) {
+            event.setCancelled(true);
+            waitingForNumberInput.remove(playerId);
+
+            try {
+                int number = Integer.parseInt(event.getMessage());
+                if (number >= 0 && number <= 36) {
+                    if (playerMoney.get(playerId) < 10) {
+                        player.sendMessage(ChatColor.RED + "Du hast nicht genug Emeralds!");
+                        return;
+                    }
+                    rouletteGames.put(playerId, "number:" + number);
+                    rouletteBets.put(playerId, 10);
+                    player.sendMessage(ChatColor.GOLD + "Du setzt auf Zahl " + number + "!");
+                    openRouletteMenu(player);
+                } else {
+                    player.sendMessage(ChatColor.RED + "Bitte gib eine Zahl zwischen 0 und 36 ein!");
+                }
+            } catch (NumberFormatException e) {
+                player.sendMessage(ChatColor.RED + "Bitte gib eine gültige Zahl ein!");
+            }
+        }
+    }
+
+    private void depositEmeralds(Player player) {
+        int emeraldsInInventory = 0;
+        for (ItemStack item : player.getInventory().getContents()) {
+            if (item != null && item.getType() == Material.EMERALD) {
+                emeraldsInInventory += item.getAmount();
+            }
+        }
+
+        if (emeraldsInInventory == 0) {
+            player.sendMessage(ChatColor.RED + "Du hast keine Emeralds in deinem Inventar!");
+            return;
+        }
+
+        player.getInventory().removeItem(new ItemStack(Material.EMERALD, emeraldsInInventory));
+
+        UUID playerId = player.getUniqueId();
+        playerMoney.put(playerId, playerMoney.get(playerId) + emeraldsInInventory);
+
+        player.sendMessage(ChatColor.GREEN + "Du hast " + emeraldsInInventory + " Emeralds eingezahlt!");
+        player.sendMessage(ChatColor.AQUA + "Neues Guthaben: " + playerMoney.get(playerId) + " Emeralds");
+        player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.2f);
+
+        openCasinoMenu(player);
+    }
+
+    private void withdrawEmeralds(Player player) {
+        UUID playerId = player.getUniqueId();
+        int balance = playerMoney.get(playerId);
+
+        if (balance == 0) {
+            player.sendMessage(ChatColor.RED + "Du hast kein Guthaben zum Auszahlen!");
+            return;
+        }
+
+        ItemStack emeralds = new ItemStack(Material.EMERALD, balance);
+        if (player.getInventory().firstEmpty() == -1) {
+            player.sendMessage(ChatColor.RED + "Dein Inventar ist voll! Mache Platz und versuche es erneut.");
+            return;
+        }
+
+        player.getInventory().addItem(emeralds);
+        playerMoney.put(playerId, 0);
+
+        player.sendMessage(ChatColor.GREEN + "Du hast " + balance + " Emeralds ausgezahlt!");
+        player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.2f);
+
+        openCasinoMenu(player);
+    }
+
+    private void openRouletteMenu(Player player) {
+        Inventory roulette = Bukkit.createInventory(null, 54, ChatColor.RED + "★ ROULETTE ★");
+
+        ItemStack redBet = new ItemStack(Material.RED_WOOL);
+        ItemMeta redMeta = redBet.getItemMeta();
+        redMeta.setDisplayName(ChatColor.RED + "Rot setzen (2x)");
+        redMeta.setLore(Arrays.asList(ChatColor.GRAY + "Einsatz: 10 Emeralds", ChatColor.YELLOW + "18 rote Zahlen"));
+        redBet.setItemMeta(redMeta);
+
+        ItemStack blackBet = new ItemStack(Material.BLACK_WOOL);
+        ItemMeta blackMeta = blackBet.getItemMeta();
+        blackMeta.setDisplayName(ChatColor.DARK_GRAY + "Schwarz setzen (2x)");
+        blackMeta.setLore(Arrays.asList(ChatColor.GRAY + "Einsatz: 10 Emeralds", ChatColor.YELLOW + "18 schwarze Zahlen"));
+        blackBet.setItemMeta(blackMeta);
+
+        ItemStack greenBet = new ItemStack(Material.LIME_WOOL);
+        ItemMeta greenMeta = greenBet.getItemMeta();
+        greenMeta.setDisplayName(ChatColor.GREEN + "Grün setzen (36x)");
+        greenMeta.setLore(Arrays.asList(ChatColor.GRAY + "Einsatz: 10 Emeralds", ChatColor.YELLOW + "Nur Zahl: 0"));
+        greenBet.setItemMeta(greenMeta);
+
+        ItemStack evenBet = new ItemStack(Material.BLUE_WOOL);
+        ItemMeta evenMeta = evenBet.getItemMeta();
+        evenMeta.setDisplayName(ChatColor.BLUE + "Gerade setzen (2x)");
+        evenMeta.setLore(Arrays.asList(ChatColor.GRAY + "Einsatz: 10 Emeralds", ChatColor.YELLOW + "Alle geraden Zahlen"));
+        evenBet.setItemMeta(evenMeta);
+
+        ItemStack oddBet = new ItemStack(Material.PURPLE_WOOL);
+        ItemMeta oddMeta = oddBet.getItemMeta();
+        oddMeta.setDisplayName(ChatColor.LIGHT_PURPLE + "Ungerade setzen (2x)");
+        oddMeta.setLore(Arrays.asList(ChatColor.GRAY + "Einsatz: 10 Emeralds", ChatColor.YELLOW + "Alle ungeraden Zahlen"));
+        oddBet.setItemMeta(oddMeta);
+
+        ItemStack lowBet = new ItemStack(Material.YELLOW_WOOL);
+        ItemMeta lowMeta = lowBet.getItemMeta();
+        lowMeta.setDisplayName(ChatColor.YELLOW + "1-18 setzen (2x)");
+        lowMeta.setLore(Arrays.asList(ChatColor.GRAY + "Einsatz: 10 Emeralds", ChatColor.YELLOW + "Niedrige Zahlen"));
+        lowBet.setItemMeta(lowMeta);
+
+        ItemStack highBet = new ItemStack(Material.ORANGE_WOOL);
+        ItemMeta highMeta = highBet.getItemMeta();
+        highMeta.setDisplayName(ChatColor.GOLD + "19-36 setzen (2x)");
+        highMeta.setLore(Arrays.asList(ChatColor.GRAY + "Einsatz: 10 Emeralds", ChatColor.YELLOW + "Hohe Zahlen"));
+        highBet.setItemMeta(highMeta);
+
+        ItemStack numberBet = new ItemStack(Material.GOLD_BLOCK);
+        ItemMeta numberMeta = numberBet.getItemMeta();
+        numberMeta.setDisplayName(ChatColor.GOLD + "Zahl wählen (36x)");
+        numberMeta.setLore(Arrays.asList(ChatColor.GRAY + "Einsatz: 10 Emeralds", ChatColor.YELLOW + "Wähle eine Zahl 0-36"));
+        numberBet.setItemMeta(numberMeta);
+
+        ItemStack spinButton = new ItemStack(Material.DIAMOND);
+        ItemMeta spinMeta = spinButton.getItemMeta();
+        spinMeta.setDisplayName(ChatColor.AQUA + "Roulette drehen!");
+        spinMeta.setLore(Arrays.asList(ChatColor.GREEN + "Starte das Spiel"));
+        spinButton.setItemMeta(spinMeta);
+
+        ItemStack moneyDisplay = new ItemStack(Material.EMERALD);
+        ItemMeta moneyMeta = moneyDisplay.getItemMeta();
+        moneyMeta.setDisplayName(ChatColor.GREEN + "Dein Guthaben");
+        moneyMeta.setLore(Arrays.asList(ChatColor.YELLOW + "" + playerMoney.get(player.getUniqueId()) + " Emeralds"));
+        moneyDisplay.setItemMeta(moneyMeta);
+
+        roulette.setItem(10, redBet);
+        roulette.setItem(12, blackBet);
+        roulette.setItem(14, greenBet);
+        roulette.setItem(16, evenBet);
+        roulette.setItem(28, oddBet);
+        roulette.setItem(30, lowBet);
+        roulette.setItem(32, highBet);
+        roulette.setItem(34, numberBet);
+        roulette.setItem(49, spinButton);
+        roulette.setItem(4, moneyDisplay);
+
+        player.openInventory(roulette);
+    }
+
+    private void handleRouletteClick(Player player, InventoryClickEvent event) {
+        UUID playerId = player.getUniqueId();
+
+        if (event.getCurrentItem() == null) return;
+
+        int playerEmeralds = playerMoney.get(playerId);
+
+        if (event.getCurrentItem().getType() == Material.RED_WOOL) {
+            if (playerEmeralds < 10) {
+                player.sendMessage(ChatColor.RED + "Du hast nicht genug Emeralds!");
+                return;
+            }
+            rouletteGames.put(playerId, "red");
+            rouletteBets.put(playerId, 10);
+            player.sendMessage(ChatColor.RED + "Du setzt auf Rot!");
+
+        } else if (event.getCurrentItem().getType() == Material.BLACK_WOOL) {
+            if (playerEmeralds < 10) {
+                player.sendMessage(ChatColor.RED + "Du hast nicht genug Emeralds!");
+                return;
+            }
+            rouletteGames.put(playerId, "black");
+            rouletteBets.put(playerId, 10);
+            player.sendMessage(ChatColor.DARK_GRAY + "Du setzt auf Schwarz!");
+
+        } else if (event.getCurrentItem().getType() == Material.LIME_WOOL) {
+            if (playerEmeralds < 10) {
+                player.sendMessage(ChatColor.RED + "Du hast nicht genug Emeralds!");
+                return;
+            }
+            rouletteGames.put(playerId, "green");
+            rouletteBets.put(playerId, 10);
+            player.sendMessage(ChatColor.GREEN + "Du setzt auf Grün (0)!");
+
+        } else if (event.getCurrentItem().getType() == Material.BLUE_WOOL) {
+            if (playerEmeralds < 10) {
+                player.sendMessage(ChatColor.RED + "Du hast nicht genug Emeralds!");
+                return;
+            }
+            rouletteGames.put(playerId, "even");
+            rouletteBets.put(playerId, 10);
+            player.sendMessage(ChatColor.BLUE + "Du setzt auf Gerade!");
+
+        } else if (event.getCurrentItem().getType() == Material.PURPLE_WOOL) {
+            if (playerEmeralds < 10) {
+                player.sendMessage(ChatColor.RED + "Du hast nicht genug Emeralds!");
+                return;
+            }
+            rouletteGames.put(playerId, "odd");
+            rouletteBets.put(playerId, 10);
+            player.sendMessage(ChatColor.LIGHT_PURPLE + "Du setzt auf Ungerade!");
+
+        } else if (event.getCurrentItem().getType() == Material.YELLOW_WOOL) {
+            if (playerEmeralds < 10) {
+                player.sendMessage(ChatColor.RED + "Du hast nicht genug Emeralds!");
+                return;
+            }
+            rouletteGames.put(playerId, "low");
+            rouletteBets.put(playerId, 10);
+            player.sendMessage(ChatColor.YELLOW + "Du setzt auf 1-18!");
+
+        } else if (event.getCurrentItem().getType() == Material.ORANGE_WOOL) {
+            if (playerEmeralds < 10) {
+                player.sendMessage(ChatColor.RED + "Du hast nicht genug Emeralds!");
+                return;
+            }
+            rouletteGames.put(playerId, "high");
+            rouletteBets.put(playerId, 10);
+            player.sendMessage(ChatColor.GOLD + "Du setzt auf 19-36!");
+
+        } else if (event.getCurrentItem().getType() == Material.GOLD_BLOCK) {
+            if (playerEmeralds < 10) {
+                player.sendMessage(ChatColor.RED + "Du hast nicht genug Emeralds!");
+                return;
+            }
+            player.closeInventory();
+            player.sendMessage(ChatColor.YELLOW + "Gib eine Zahl zwischen 0 und 36 in den Chat ein:");
+            waitingForNumberInput.put(playerId, true);
+
+        } else if (event.getCurrentItem().getType() == Material.DIAMOND) {
+            if (!rouletteGames.containsKey(playerId)) {
+                player.sendMessage(ChatColor.RED + "Du musst zuerst einen Einsatz wählen!");
+                return;
+            }
+            spinRoulette(player);
+        }
+    }
+
+    private void spinRoulette(Player player) {
+        UUID playerId = player.getUniqueId();
+        String bet = rouletteGames.get(playerId);
+        int betAmount = rouletteBets.get(playerId);
+
+        playerMoney.put(playerId, playerMoney.get(playerId) - betAmount);
+
+        player.closeInventory();
+        player.sendMessage(ChatColor.YELLOW + "Das Roulette dreht sich...");
+
+        new BukkitRunnable() {
+            int ticks = 0;
+            @Override
+            public void run() {
+                ticks++;
+                if (ticks <= 4) {
+                    player.sendMessage(ChatColor.YELLOW + "Kugel rollt" + ".".repeat(ticks));
+                    player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 0.7f, 0.8f + (ticks * 0.2f));
+                } else {
+                    Random random = new Random();
+                    int winningNumber = rouletteNumbers[random.nextInt(rouletteNumbers.length)];
+                    handleRouletteResult(player, bet, betAmount, winningNumber);
+                    this.cancel();
+                }
+            }
+        }.runTaskTimer(this, 20L, 15L);
+    }
+
+    private void handleRouletteResult(Player player, String bet, int betAmount, int winningNumber) {
+        UUID playerId = player.getUniqueId();
+        boolean isRed = isRedNumber(winningNumber);
+        boolean isGreen = isGreenNumber(winningNumber);
+        boolean won = false;
+        int winnings = 0;
+
+        player.sendMessage(ChatColor.GOLD + "★ ROULETTE ERGEBNIS ★");
+
+        String colorText;
+        if (isGreen) {
+            colorText = ChatColor.GREEN + "Grün";
+        } else if (isRed) {
+            colorText = ChatColor.RED + "Rot";
+        } else {
+            colorText = ChatColor.DARK_GRAY + "Schwarz";
+        }
+
+        player.sendMessage(ChatColor.YELLOW + "Gewinnzahl: " + winningNumber + " (" + colorText + ChatColor.YELLOW + ")");
+
+        switch (bet) {
+            case "red":
+                if (isRed && !isGreen) {
+                    won = true;
+                    winnings = betAmount * 2;
+                }
+                break;
+
+            case "black":
+                if (!isRed && !isGreen) {
+                    won = true;
+                    winnings = betAmount * 2;
+                }
+                break;
+
+            case "green":
+                if (isGreen) {
+                    won = true;
+                    winnings = betAmount * 36;
+                }
+                break;
+
+            case "even":
+                if (winningNumber != 0 && winningNumber % 2 == 0) {
+                    won = true;
+                    winnings = betAmount * 2;
+                }
+                break;
+
+            case "odd":
+                if (winningNumber != 0 && winningNumber % 2 == 1) {
+                    won = true;
+                    winnings = betAmount * 2;
+                }
+                break;
+
+            case "low":
+                if (winningNumber >= 1 && winningNumber <= 18) {
+                    won = true;
+                    winnings = betAmount * 2;
+                }
+                break;
+
+            case "high":
+                if (winningNumber >= 19 && winningNumber <= 36) {
+                    won = true;
+                    winnings = betAmount * 2;
+                }
+                break;
+
+            default:
+                if (bet.startsWith("number:")) {
+                    int betNumber = Integer.parseInt(bet.split(":")[1]);
+                    if (betNumber == winningNumber) {
+                        won = true;
+                        winnings = betAmount * 36;
+                    }
+                }
+                break;
+        }
+
+        if (won) {
+            playerMoney.put(playerId, playerMoney.get(playerId) + winnings);
+            player.sendMessage(ChatColor.GREEN + "★ GEWONNEN! ★ Du erhältst " + winnings + " Emeralds!");
+            player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1.0f, 1.5f);
+        } else {
+            player.sendMessage(ChatColor.RED + "Leider verloren! Versuch es nochmal!");
+            player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1.0f, 0.8f);
+        }
+
+        rouletteGames.remove(playerId);
+        rouletteBets.remove(playerId);
+
+        player.sendMessage(ChatColor.AQUA + "Dein Guthaben: " + playerMoney.get(playerId) + " Emeralds");
+    }
+
+    private boolean isRedNumber(int number) {
+        int[] redNumbers = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36};
+        for (int red : redNumbers) {
+            if (red == number) return true;
+        }
+        return false;
+    }
+
+    private boolean isGreenNumber(int number) {
+        for (int green : greenNumbers) {
+            if (green == number) return true;
+        }
+        return false;
+    }
+
+    private void spinWheel(Player player) {
+        UUID playerId = player.getUniqueId();
+        LocalDate today = LocalDate.now();
+
+        if (lastWheelSpin.containsKey(playerId) && lastWheelSpin.get(playerId).equals(today)) {
+            player.sendMessage(ChatColor.RED + "Du hast heute bereits das Glücksrad gedreht!");
+            player.playSound(player.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 1.0f, 0.5f);
+            return;
+        }
+
+        player.closeInventory();
+        player.sendMessage(ChatColor.YELLOW + "Das Glücksrad dreht sich...");
+        player.playSound(player.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1.0f, 1.0f);
+
+        new BukkitRunnable() {
+            int ticks = 0;
+            @Override
+            public void run() {
+                ticks++;
+                if (ticks <= 3) {
+                    player.sendMessage(ChatColor.YELLOW + "Drehe" + ".".repeat(ticks));
+                    player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 0.5f, 1.0f + (ticks * 0.1f));
+                } else {
+                    Random random = new Random();
+                    String prize = wheelPrizes[random.nextInt(wheelPrizes.length)];
+
+                    lastWheelSpin.put(playerId, today);
+                    handleWheelPrize(player, prize);
+                    this.cancel();
+                }
+            }
+        }.runTaskTimer(this, 20L, 15L);
+    }
+
+    private void handleWheelPrize(Player player, String prize) {
+        UUID playerId = player.getUniqueId();
+
+        player.sendMessage(ChatColor.GOLD + "★ GLÜCKSRAD ERGEBNIS ★");
+        player.sendMessage(ChatColor.YELLOW + "Du hast gewonnen: " + ChatColor.AQUA + prize);
+
+        if (prize.equals("Nichts")) {
+            player.sendMessage(ChatColor.RED + "Leider kein Gewinn. Versuch es morgen nochmal!");
+            player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1.0f, 0.8f);
+        } else {
+            player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1.0f, 1.2f);
+
+            if (prize.contains("Emerald")) {
+                int amount = Integer.parseInt(prize.split(" ")[0]);
+                playerMoney.put(playerId, playerMoney.get(playerId) + amount);
+                player.sendMessage(ChatColor.GREEN + "Dein Guthaben wurde um " + amount + " Emeralds erhöht!");
+            } else if (prize.contains("Gold")) {
+                int amount = Integer.parseInt(prize.split(" ")[0]);
+                ItemStack gold = new ItemStack(Material.GOLD_INGOT, amount);
+                player.getInventory().addItem(gold);
+                player.sendMessage(ChatColor.GOLD + "Du hast " + amount + " Gold erhalten!");
+            } else if (prize.contains("Diamond")) {
+                int amount = Integer.parseInt(prize.split(" ")[0]);
+                ItemStack diamond = new ItemStack(Material.DIAMOND, amount);
+                player.getInventory().addItem(diamond);
+                player.sendMessage(ChatColor.AQUA + "Du hast " + amount + " Diamant(en) erhalten!");
+            } else if (prize.contains("Iron")) {
+                int amount = Integer.parseInt(prize.split(" ")[0]);
+                ItemStack iron = new ItemStack(Material.IRON_INGOT, amount);
+                player.getInventory().addItem(iron);
+                player.sendMessage(ChatColor.WHITE + "Du hast " + amount + " Eisen erhalten!");
+            }
+        }
+
+        player.sendMessage(ChatColor.AQUA + "Dein Guthaben: " + playerMoney.get(playerId) + " Emeralds");
+        player.sendMessage(ChatColor.YELLOW + "Komm morgen wieder für einen weiteren Spin!");
+    }
+}
