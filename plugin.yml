@@ -1,0 +1,7 @@
+name: CasinoPlugin
+version: 1.0
+main: casino.plugin.CasinoPlugin
+api-version: 1.13
+commands:
+  casino:
+    description: Öffnet das Casino-Menü
